@@ -13,6 +13,7 @@ class Server {
       arrive: [],
       leave: [],
       receive: [],
+      listening: [],
     };
   }
 
@@ -24,6 +25,10 @@ class Server {
     const server = new WebsocketServer({port});
     let nextConnId = 0;
     const connections = {};
+
+    server.on('listening', () => {
+      this.eventHandlers.listening.forEach(h => h(connections));
+    })
 
     server.on('connection', (socket, req) => {
       const connId = nextConnId++;
@@ -46,6 +51,7 @@ class Server {
       };
 
       socket.sendJSON = function(json) {
+        console.log("<- ", json);
         this.send(JSON.stringify(json));
       }
 
@@ -73,7 +79,7 @@ class Server {
           return;
         }
         
-        this.eventHandlers.receive.forEach(handler => handler(connId, socket, data));
+        this.eventHandlers.receive.forEach(handler => handler(connId, socket, parsed));
       });
 
       socket.on('ping', data => {
@@ -94,15 +100,12 @@ class Server {
   }
 }
 
+// Some example handlers:
 
-
+// Logs arrive/leave events
 function logArrivalDeparture(server) {
   server.on('arrive', (connId, socket, connections) => {
     console.log("client", connId, "arrive", "clients:", Object.keys(connections));
-    socket.sendJSON({
-      type: "push",
-      what: "welcome",
-    });
   })
 
   server.on('leave', (connId, connections) => {
@@ -110,9 +113,31 @@ function logArrivalDeparture(server) {
   })
 }
 
+// Broadcasts list of peers to everyone, whenever someone arrives or leaves
+function notifyPeers(server) {
+  function notify(connections) {
+    peers = Object.keys(connections);
+    Object.entries(connections).forEach(([connId, socket]) => {
+      socket.sendJSON({
+        type: "push",
+        what: "peers",
+        data: {peers, you: connId},
+      });
+    });
+  }
+  server.on('arrive', (connId, socket, connections) => {
+    notify(connections);
+  });
+
+  server.on('leave', (connId, connections) => {
+    notify(connections);
+  });
+}
+
+// Install a custom set of request handlers
 function installRequestResponseProtocol(server, handlers) {
-  server.on('receive', (connId, socket, data) => {
-    console.log("client", connId, "receive", parsed);
+  server.on('receive', (connId, socket, parsed) => {
+    console.log("client", connId, "receiveReq", parsed);
     if (parsed.type === "req") {
       const {id, what, data} = parsed;
       if (!Number.isInteger(id)) {
@@ -122,17 +147,57 @@ function installRequestResponseProtocol(server, handlers) {
         socket.sendJSON({ type: "res", id, err, data });
       };
       if (handlers.hasOwnProperty(what)) {
-        handlers[what](data, reply);
+        handlers[what](data, reply, connId);
       } else {
-        reply("invalid request: " + what)
+        //reply("invalid request: " + what)
       }
     }
   })
 }
 
-const s = new Server();
-logArrivalDeparture(s);
-installRequestResponseProtocol(s, {
-  "hello": (data, reply) => reply(null, "world"),
-});
-s.listen(8010);
+function messagingBroker(server) {
+  let connections = null;
+  server.on('listening', cs => {
+    connections = cs;
+  });
+
+  const pending = {};
+  let ctr = 0;
+
+  server.on('receive', (connId, socket, parsed) => {
+    if (parsed.type === "res") {
+      const {id, err, data} = parsed;
+      if (pending.hasOwnProperty(id)) {
+        const reply = pending[id];
+        reply(err, data);
+        // forward reply
+        // reply(null, {err, data});
+      }
+    }
+  });
+
+  installRequestResponseProtocol(server, {
+    "forw": (data, reply, from) => {
+      const {to, msg} = data;
+      if (connections.hasOwnProperty(to)) {
+        const toSocket = connections[to];
+        const id = ctr++;
+        pending[id] = reply;
+        toSocket.sendJSON({ type: "req", id, what: "msg", data: { from, msg } });
+        // reply();
+      } else {
+        reply("unknown 'to'");
+      }
+    }
+  })
+}
+
+
+module.exports = {
+  Server,
+  logArrivalDeparture,
+  notifyPeers,
+  installRequestResponseProtocol,
+  messagingBroker,
+}
+

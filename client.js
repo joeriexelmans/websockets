@@ -29,6 +29,11 @@ class Timer {
   }
 }
 
+function recvJSON(data) {
+  const parsed = JSON.parse(data) // may throw
+  if (parsed.type !== "pong") console.log("--> ", parsed);
+  return parsed;
+}
 
 class Client {
 
@@ -37,6 +42,7 @@ class Client {
       connected: [],
       disconnected: [],
       receivePush: [],
+      receiveReq: [],
     };
 
     this.connected = false;
@@ -47,7 +53,7 @@ class Client {
     // This timer is reset each time we send anything to the server.
     // upon timeout, we send a ping
     this.sendPingTimer = new Timer(PING_INTERVAL, () => {
-      this.socket.send(JSON.stringify({ type: "ping" }))
+      this.socket.sendJSON({ type: "ping" });
       this.sendPingTimer.set(); // schedule next ping
     });
 
@@ -73,10 +79,15 @@ class Client {
       // in case connection fails, try again later
       const retry = setTimeout(() => { this.connect(); }, RECONNECT_INTERVAL);
 
+      socket.sendJSON = function(json) {
+        if (json.type !== "ping") console.log("<-- ", json);
+        this.send(JSON.stringify(json));
+      }
+
       socket.onmessage = (event) => {
         let parsed;
         try {
-          parsed = JSON.parse(event.data);
+          parsed = recvJSON(event.data);
         } catch (e) {
           return; // ignore unparsable messages
         }
@@ -97,14 +108,19 @@ class Client {
           const {what, data} = parsed;
           this.eventHandlers.receivePush.forEach(h => h(what, data));
         }
+        else if (parsed.type === "req") {
+          const {id, what, data} = parsed;
+          const reply = (err, data) => {
+            socket.sendJSON({type:"res", id, err, data});
+          }
+          this.eventHandlers.receiveReq.forEach(h => h(what, data, reply));
+        }
       }
 
       socket.onopen = () => {
         // Connected!
 
         clearTimeout(retry);
-
-        this.eventHandlers.connected.forEach(h => h(socket));
 
         socket.onclose = () => {
           this.eventHandlers.disconnected.forEach(h => h());
@@ -115,11 +131,13 @@ class Client {
 
         // resend pending requests
         Object.entries(this.pendingRequests).forEach(([id, [what, data]]) => {
-          socket.send(JSON.stringify({ type: "req", id, what, data }));
+          socket.sendJSON({ type: "req", id: parseInt(id), what, data });
         });
 
         this.sendPingTimer.set();
         this.serverTimeoutTimer.set();
+
+        this.eventHandlers.connected.forEach(h => h(socket));
       }
 
       this.socket = socket;
@@ -134,7 +152,7 @@ class Client {
     this.pendingRequests[id] = [what, data, callback];
 
     // attempt to send - has no effect when socket is closed
-    this.socket.send(JSON.stringify({ type: "req", id, what, data }));
+    this.socket.sendJSON({ type: "req", id, what, data });
 
     // postpone the next ping - the server knows we're alive from the request we just sent
     this.sendPingTimer.set();
@@ -142,8 +160,37 @@ class Client {
 }
 
 
-const client = new Client();
-client.on('receivePush', (what, data) => {
-  console.log("receive push", what, data);
-});
-client.connect("ws://localhost:8010");
+// function peerToPeer(client, handlers) {
+//   client.on('receivePush', (what, data) => {
+//     if (what === "msg") {
+//       const {from, type, msg: {what, param}} = data;
+//       if (handlers.hasOwnProperty(what)) {
+//         const reply = data => {
+//           client.request("reply", )
+//         }
+//         handers[what](from, param, reply);
+//       }
+//     }
+//   })
+
+//   const sendToPeer = 
+// }
+
+function peerToPeer(client, handlers) {
+
+  client.on('receiveReq', (what, data, reply) => {
+    if (what === "msg") {
+      const {from, msg} = data;
+      if (handlers.hasOwnProperty(msg.what)) {
+        handlers[msg.what](from, msg.data, reply);
+      }
+    }
+  });
+
+  const sendToPeer = (to, what, data, callback) => {
+    client.request("forw", { to, msg: { what, data } }, callback);
+  }
+
+  return sendToPeer;
+}
+
