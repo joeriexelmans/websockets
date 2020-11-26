@@ -1,34 +1,31 @@
 <html>
 <head>
   <title>WS Client</title>
+  <script type="text/javascript" src="common.js"></script>
   <script type="text/javascript" src="client.js"></script>
   <script type="text/javascript">
     const client = new Client();
 
     client.on('connected', () => {
-      console.log("connected");
+      // console.log("connected");
 
-      // client.request("hello", null, (err, data) => {
-      //   console.log("server answered:", "err:", err, "data:", data)
-      // });
-
+      client.request("hello", null, (err, data) => {
+        console.log("server answered:", "err:", err, "data:", data)
+      });
     });
-    const sendToPeer = peerToPeer(client, {
+    const p2p = new PeerToPeer(client, {
       "HI": (from, data, reply) => {
         reply(null, "howdy!");
       }
     })
 
-    client.on('disconnected', () => console.log("disconnected"));
+    // client.on('disconnected', () => console.log("disconnected"));
     client.on('receivePush', (what, data) => {
       console.log("receivePush", what, data);
 
       if (what === "peers") {
-        // client.request("forw", {to: data.you, msg:"hey"}, (err, data) => {
-        //   console.log("sent forw, err:", err, "data:", data)
-        // })
 
-        sendToPeer(data.you, "HI", null, (err, data) => {
+        p2p.send(data.you, "HI", null, (err, data) => {
           console.log("got response....", err, data);
         })
       }

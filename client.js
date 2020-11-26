@@ -1,3 +1,4 @@
+
 // Client parameters
 
 // If connection to server does not succeed within this amount of time, try again.
@@ -8,26 +9,6 @@ const PING_INTERVAL = 1000; // ms
 // After not having received anything from the server for this amount of time, reconnect.
 const SERVER_TIMEOUT = 5000; // ms
 
-
-class Timer {
-  constructor(duration, callback) {
-    this.duration = duration;
-    this.callback = callback;
-    this.id = null;
-  }
-
-  // (re)sets timer
-  set() {
-    clearTimeout(this.id);
-    this.id = setTimeout(() => {
-      this.callback();
-    }, this.duration);
-  }
-
-  unset() {
-    clearTimeout(this.id);
-  }
-}
 
 function recvJSON(data) {
   const parsed = JSON.parse(data) // may throw
@@ -47,8 +28,8 @@ class Client {
 
     this.connected = false;
     this.socket = null;
-    this.pendingRequests = {};
-    this.requestCtr = 0;
+
+    this.requestReply = new RequestReply();
 
     // This timer is reset each time we send anything to the server.
     // upon timeout, we send a ping
@@ -95,14 +76,7 @@ class Client {
         this.serverTimeoutTimer.set();
 
         if (parsed.type === "res") {
-          const {id, err, data} = parsed;
-          if (this.pendingRequests.hasOwnProperty(id)) {
-            const [,, callback] = this.pendingRequests[id];
-            delete this.pendingRequests[id];
-            if (callback) {
-              callback(err, data);
-            }
-          }
+          this.requestReply.handleResponse(parsed);
         }
         else if (parsed.type === "push") {
           const {what, data} = parsed;
@@ -130,8 +104,8 @@ class Client {
         }
 
         // resend pending requests
-        Object.entries(this.pendingRequests).forEach(([id, [what, data]]) => {
-          socket.sendJSON({ type: "req", id: parseInt(id), what, data });
+        this.requestReply.getPending().forEach(([req,]) => {
+          socket.sendJSON(req);
         });
 
         this.sendPingTimer.set();
@@ -146,51 +120,27 @@ class Client {
   }
 
   request(what, data, callback) {
-    const id = this.requestCtr++;
-
-    // store not just the response callback, but also the request itself, in case we have to resend it
-    this.pendingRequests[id] = [what, data, callback];
-
-    // attempt to send - has no effect when socket is closed
-    this.socket.sendJSON({ type: "req", id, what, data });
-
-    // postpone the next ping - the server knows we're alive from the request we just sent
+    const req = this.requestReply.createRequest(what, data, callback);
+    this.socket.sendJSON(req);
     this.sendPingTimer.set();
   }
 }
 
+class PeerToPeer {
+  constructor(client, handlers) {
+    this.client = client;
 
-// function peerToPeer(client, handlers) {
-//   client.on('receivePush', (what, data) => {
-//     if (what === "msg") {
-//       const {from, type, msg: {what, param}} = data;
-//       if (handlers.hasOwnProperty(what)) {
-//         const reply = data => {
-//           client.request("reply", )
-//         }
-//         handers[what](from, param, reply);
-//       }
-//     }
-//   })
-
-//   const sendToPeer = 
-// }
-
-function peerToPeer(client, handlers) {
-
-  client.on('receiveReq', (what, data, reply) => {
-    if (what === "msg") {
-      const {from, msg} = data;
-      if (handlers.hasOwnProperty(msg.what)) {
-        handlers[msg.what](from, msg.data, reply);
+    this.client.on('receiveReq', (what, data, reply) => {
+      if (what === "msg") {
+        const {from, msg} = data;
+        if (handlers.hasOwnProperty(msg.what)) {
+          handlers[msg.what](from, msg.data, reply);
+        }
       }
-    }
-  });
-
-  const sendToPeer = (to, what, data, callback) => {
-    client.request("forw", { to, msg: { what, data } }, callback);
+    });
   }
 
-  return sendToPeer;
+  send(to, what, data, callback) {
+    client.request("forw", { to, msg: { what, data } }, callback);
+  }
 }
-
