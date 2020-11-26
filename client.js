@@ -1,104 +1,149 @@
-const CLIENT_PING_INTERVAL = 300; // ms, interval for sending ping to server
-const SERVER_TIMEOUT = 1000; // ms, time before lack of server response is considered a timeout
-const TIMEOUT_THRESHOLD = 3; // number of missed replies
+// Client parameters
 
-class Client {
-  constructor() {
-    this.socket = null;
-    this.timeoutCtr = 0;
-    this.reqCtr = 0;
-    this.requests = {};
+// If connection to server does not succeed within this amount of time, try again.
+const RECONNECT_INTERVAL = 1000; // ms
 
-    this.clientTimeout = null; // after this timeout, the client will send a ping
-    this.serverTimeout = null; // after this timeout, a request to the server is considered 'timed out'
+const PING_INTERVAL = 1000; // ms
+
+// After not having received anything from the server for this amount of time, reconnect.
+const SERVER_TIMEOUT = 5000; // ms
+
+
+class Timer {
+  constructor(duration, callback) {
+    this.duration = duration;
+    this.callback = callback;
+    this.id = null;
   }
 
-  connect(addr) {
-    this.socket = new WebSocket(addr);
-
-    this.socket.onmessage = msg => {
-      const parsed = JSON.parse(msg.data)
-      // if (parsed.param !== undefined || parsed.err !== undefined) {
-        console.log("Received", parsed);
-      // }
-      
-      const {reqId, param, err} = parsed;
-      if (reqId !== undefined && reqId in this.requests) {
-        const callback = this.requests[reqId];
-        delete this.requests[reqId];
-        callback(err, param);
-      }
-    }
-
-    // this.socket.onopen = () => {
-    //   // start sending pings
-    //   this._resetClientTimeout();
-    // };
-
-    // this.socket.onclose = () => {
-    //   if (this.clientTimeout !== null) {
-    //     window.clearTimeout(this.clientTimeout);
-    //   }
-    // }
+  // (re)sets timer
+  set() {
+    clearTimeout(this.id);
+    this.id = setTimeout(() => {
+      this.callback();
+    }, this.duration);
   }
 
-  // _resetClientTimeout() {
-  //     if (this.clientTimeout !== null) {
-  //       window.clearInterval(this.clientTimeout);
-  //     }
-  //     this.clientTimeout = window.setTimeout(() => {
-  //       this.request("ping", null, () => {});
-  //       this.clientTimeout = null;
-  //     }, CLIENT_PING_INTERVAL);
-  // }
-
-  request(cmd, param, callback) {
-    if (this.socket == null) {
-      callback("not connected");
-    }
-
-    const reqId = this.reqCtr++;
-
-    this.socket.send(JSON.stringify({
-      reqId,
-      cmd,
-      param,
-    }));
-
-    // const serverTimeout = window.setTimeout(() => {
-    //   this.timeoutCtr++;
-    //   delete this.requests[reqId];
-
-    //   if (timeoutCtr > TIMEOUT_THRESHOLD) {
-    //     socket = null;
-    //     console.log("Server timeout")
-    //   }
-    // }, SERVER_TIMEOUT);
-
-    // // delay next ping
-    // this._resetClientTimeout();
-
-    this.requests[reqId] = (err, data) => {
-      // window.clearTimeout(serverTimeout);
-      callback(err, data);
-    };
-  }
-
-  disconnect() {
-    this.request("leave", null, (err, data) => {
-    })
+  unset() {
+    clearTimeout(this.id);
   }
 }
 
 
-window.onbeforeunload = function(){
-  // socket.onclose = function () {};
-  // socket.close();
-  client.disconnect();
+class Client {
+
+  constructor() {
+    this.eventHandlers = {
+      connected: [],
+      disconnected: [],
+      receivePush: [],
+    };
+
+    this.connected = false;
+    this.socket = null;
+    this.pendingRequests = {};
+    this.requestCtr = 0;
+
+    // This timer is reset each time we send anything to the server.
+    // upon timeout, we send a ping
+    this.sendPingTimer = new Timer(PING_INTERVAL, () => {
+      this.socket.send(JSON.stringify({ type: "ping" }))
+      this.sendPingTimer.set(); // schedule next ping
+    });
+
+    // this timer is reset each time we receive anything from the server.
+    // upon timeout, connection is considered dead
+    this.serverTimeoutTimer = new Timer(SERVER_TIMEOUT, () => {
+      this.connect();
+    });
+  }
+
+  on(event, handler) {
+    this.eventHandlers[event].push(handler);
+  }
+
+  // (re)connects to server
+  connect() {
+    if (this.socket !== null) {
+      this.socket.close();
+    }
+    const attempt = () => {
+      const socket = new WebSocket("ws://localhost:8010");
+
+      // in case connection fails, try again later
+      const retry = setTimeout(() => { this.connect(); }, RECONNECT_INTERVAL);
+
+      socket.onmessage = (event) => {
+        let parsed;
+        try {
+          parsed = JSON.parse(event.data);
+        } catch (e) {
+          return; // ignore unparsable messages
+        }
+
+        this.serverTimeoutTimer.set();
+
+        if (parsed.type === "res") {
+          const {id, err, data} = parsed;
+          if (this.pendingRequests.hasOwnProperty(id)) {
+            const [,, callback] = this.pendingRequests[id];
+            delete this.pendingRequests[id];
+            if (callback) {
+              callback(err, data);
+            }
+          }
+        }
+        else if (parsed.type === "push") {
+          const {what, data} = parsed;
+          this.eventHandlers.receivePush.forEach(h => h(what, data));
+        }
+      }
+
+      socket.onopen = () => {
+        // Connected!
+
+        clearTimeout(retry);
+
+        this.eventHandlers.connected.forEach(h => h(socket));
+
+        socket.onclose = () => {
+          this.eventHandlers.disconnected.forEach(h => h());
+          this.sendPingTimer.unset();
+          this.serverTimeoutTimer.unset();
+          attempt();
+        }
+
+        // resend pending requests
+        Object.entries(this.pendingRequests).forEach(([id, [what, data]]) => {
+          socket.send(JSON.stringify({ type: "req", id, what, data }));
+        });
+
+        this.sendPingTimer.set();
+        this.serverTimeoutTimer.set();
+      }
+
+      this.socket = socket;
+    };
+    attempt();
+  }
+
+  request(what, data, callback) {
+    const id = this.requestCtr++;
+
+    // store not just the response callback, but also the request itself, in case we have to resend it
+    this.pendingRequests[id] = [what, data, callback];
+
+    // attempt to send - has no effect when socket is closed
+    this.socket.send(JSON.stringify({ type: "req", id, what, data }));
+
+    // postpone the next ping - the server knows we're alive from the request we just sent
+    this.sendPingTimer.set();
+  }
 }
 
 
 const client = new Client();
-client.connect("ws://localhost:8010/");
-
-
+client.on('receivePush', (what, data) => {
+  console.log("receive push", what, data);
+});
+client.connect("ws://localhost:8010");

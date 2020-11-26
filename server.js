@@ -1,128 +1,138 @@
-const CLIENT_TIMEOUT = 1000; // ms
+const WebsocketServer = require('ws').Server;
 
-const port = 8010;
-const nginx_rev_proxy = false;
+// Server parameters
 
-class InvalidRequest extends Error {}
+// After having not received anything from the client (including pings) for this amount of time,
+// the client will be considered disconnected.
+const CLIENT_TIMEOUT = 5000; // ms
 
-console.log("Listening on " + port);
+class Server {
 
-const connections = {};
-const timers = {};
-let nextId = 0;
-
-var WebSocketServer = require('ws').Server
-, wss = new WebSocketServer({port});
-
-function checkReq(cond, msg) {
-  if (!cond) throw new InvalidRequest(msg);
-}
-
-function sendJSON(ws, json) {
-  ws.send(JSON.stringify(json));
-}
-
-function sendPush(ws, what, param) {
-  sendJSON(ws, {what, param});
-  // return {push: { what, param }};
-}
-
-function pushSetPeers(you) {
-  Object.values(connections).forEach(ws => {
-    sendPush(ws, "setPeers", {
-      you,
-      peers: Object.keys(connections).filter(p => p != you),
-    })
-  });
-}
-
-wss.on('connection', function(ws, req) {
-  const connId = (nextId++).toString(); // unique ID for every connection
-
-  console.log("Client %s joined", connId)
-
-  // store connection
-  connections[connId] = ws;
-
-  // notify others
-  pushSetPeers(connId);
-
-  // let connTimeout = null;
-
-  // const resetTimeout = () => {
-  //   if (connTimeout !== null) clearTimeout(connTimeout);
-  //   connTimeout = setTimeout(() => {
-  //     ws.close();
-  //     delete connections[connId];
-  //     console.log("Client %s timeout", connId)
-  //     pushSetPeers();
-  //   }, CLIENT_TIMEOUT);
-  // }
-
-
-  ws.on('message', function(message) {
-    console.log('Received from client: %s', message);
-
-    // resetTimeout();
-
-    let reqId, cmd, param;
-
-    const sendReply = param => {
-      sendJSON(this, { reqId, param });
+  constructor() {
+    this.eventHandlers = {
+      arrive: [],
+      leave: [],
+      receive: [],
     };
+  }
 
-    const sendErr = err => {
-      sendJSON(this, { reqId, err });
-    }
+  on(eventName, callback) {
+    this.eventHandlers[eventName].push(callback);
+  }
 
-    try {
-      ({reqId, cmd, param} = JSON.parse(message));
+  listen(port) {
+    const server = new WebsocketServer({port});
+    let nextConnId = 0;
+    const connections = {};
 
-      if (!Number.isInteger(reqId)) throw Error("invalid reqId");
+    server.on('connection', (socket, req) => {
+      const connId = nextConnId++;
+      let timer = null;
 
-      switch (cmd) {
-      case "lspeers":
-        sendReply({
-          peers: Object.keys(connections),
-        });
-        break;
-      case "broadcast":
-        Object.values(connections).forEach(ws => {
-          sendPush(ws, "broadcast", {
-            from: connId,
-            msg: param.msg,            
-          })
-        });
-        break;
-      case "narrowcast":
-        const {dst, msg} = param;
-        checkReq(dst in connections, "invalid dst");
-        sendPush(connections[dst], "narrowcast", {
-          from: connId,
-          reqId,
-          msg: param.msg,
-        });
-        sendReply();
-        break;
-      case "ping":
-        sendReply();
-        break;
-      case "leave":
-        delete connections[connId];
-        console.log("Client %s left", connId)
-        sendReply();
-        break;
-      default:
-        throw new InvalidRequest("invalid command: " + cmd)
+      const resetTimer = () => {
+        // TODO: evaluate if the use of NodeJS timers here is detrimental to performance
+        // if we are dealing with many concurrent connections.
+        // Alternatively switch to an event queue with heap data structure
+        clearTimeout(timer);
+
+        timer = setTimeout(() => {
+          console.log("client", connId, "timeout");
+          socket.close();
+          if (connections.hasOwnProperty(connId)) {
+            delete connections[connId];
+            this.eventHandlers.leave.forEach(handler => handler(connId, connections));
+          }
+        }, CLIENT_TIMEOUT);      
+      };
+
+      socket.sendJSON = function(json) {
+        this.send(JSON.stringify(json));
       }
-    } catch (e) {
-      if (e instanceof InvalidRequest) {
-        sendErr(e.message);
+
+      resetTimer();
+      connections[connId] = socket;
+      this.eventHandlers.arrive.forEach(handler => handler(connId, socket, connections));
+
+      socket.on('open', () => {
+        // Seems to never occur for incoming connections
+        console.log("client", connId, "open");
+      });
+
+      socket.on('message', data => {
+        resetTimer();
+        // const sliced = data.length > 40 ? data.slice(0,40)+"..." : data;
+
+        let parsed;
+        try {
+          parsed = JSON.parse(data);
+        } catch (e) {
+          return; // ignore unparsable messages
+        }
+        if (parsed.type === "ping") {
+          socket.sendJSON({ type: "pong" });
+          return;
+        }
+        
+        this.eventHandlers.receive.forEach(handler => handler(connId, socket, data));
+      });
+
+      socket.on('ping', data => {
+        resetTimer();
+        // Browsers can't send pings, but we send back pongs anyway, just in case
+        socket.pong();
+      });
+
+      socket.on('close', (code, reason) => {
+        // console.log("client", connId, "closed. code:", code, "reason:", reason);
+        if (connections.hasOwnProperty(connId)) {
+          clearTimeout(timer);
+          delete connections[connId];
+          this.eventHandlers.leave.forEach(handler => handler(connId, connections));
+        }
+      });
+    });
+  }
+}
+
+
+
+function logArrivalDeparture(server) {
+  server.on('arrive', (connId, socket, connections) => {
+    console.log("client", connId, "arrive", "clients:", Object.keys(connections));
+    socket.sendJSON({
+      type: "push",
+      what: "welcome",
+    });
+  })
+
+  server.on('leave', (connId, connections) => {
+    console.log("client", connId, "leave", "clients:", Object.keys(connections));
+  })
+}
+
+function installRequestResponseProtocol(server, handlers) {
+  server.on('receive', (connId, socket, data) => {
+    console.log("client", connId, "receive", parsed);
+    if (parsed.type === "req") {
+      const {id, what, data} = parsed;
+      if (!Number.isInteger(id)) {
+        return; // invalid request
+      }
+      const reply = (err, data) => {
+        socket.sendJSON({ type: "res", id, err, data });
+      };
+      if (handlers.hasOwnProperty(what)) {
+        handlers[what](data, reply);
       } else {
-        console.log("Caught", e)
-        sendErr("server error");
+        reply("invalid request: " + what)
       }
     }
-  });
-});
+  })
+}
 
+const s = new Server();
+logArrivalDeparture(s);
+installRequestResponseProtocol(s, {
+  "hello": (data, reply) => reply(null, "world"),
+});
+s.listen(8010);
