@@ -139,7 +139,7 @@ function notifyPeers(server) {
 }
 
 // Install a custom set of request handlers
-function installResponseHandler(server, handlers) {
+function installRequestHandler(server, handlers) {
   server.on('receive', (connId, socket, parsed) => {
     // console.log("client", connId, "receiveReq", parsed);
     if (parsed.type === "req") {
@@ -173,7 +173,7 @@ function messagingBroker(server) {
     }
   });
 
-  installResponseHandler(server, {
+  installRequestHandler(server, {
     "forw": ({to, msg}, reply, from) => {
       if (connections.hasOwnProperty(to)) {
         const toSocket = connections[to];
@@ -191,7 +191,7 @@ module.exports = {
   Server,
   logArrivalDeparture,
   notifyPeers,
-  installResponseHandler,
+  installRequestHandler,
   messagingBroker,
 }
 

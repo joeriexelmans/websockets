@@ -5,7 +5,7 @@ const s = new server.Server();
 // register handlers
 server.logArrivalDeparture(s);
 server.notifyPeers(s);
-server.installResponseHandler(s, {
+server.installRequestHandler(s, {
   "hello": (data, reply) => reply(null, "world!"),
 });
 server.messagingBroker(s);
