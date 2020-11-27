@@ -4,7 +4,7 @@
   <script type="text/javascript" src="common.js"></script>
   <script type="text/javascript" src="client.js"></script>
   <script type="text/javascript">
-    const client = new Client();
+    const client = new Client("ws://localhost:8010");
 
     client.on('connected', () => {
       // console.log("connected");
@@ -13,6 +13,7 @@
         console.log("server answered:", "err:", err, "data:", data)
       });
     });
+    
     const p2p = new PeerToPeer(client, {
       "HI": (from, data, reply) => {
         reply(null, "howdy!");
@@ -31,7 +32,7 @@
       }
     });
 
-    client.connect("ws://localhost:8010");
+    client.connect();
 
   </script>
 </head>

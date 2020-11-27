@@ -18,7 +18,9 @@ function recvJSON(data) {
 
 class Client {
 
-  constructor() {
+  constructor(addr) {
+    this.addr = addr;
+
     this.eventHandlers = {
       connected: [],
       disconnected: [],
@@ -55,7 +57,7 @@ class Client {
       this.socket.close();
     }
     const attempt = () => {
-      const socket = new WebSocket("ws://localhost:8010");
+      const socket = new WebSocket(this.addr);
 
       // in case connection fails, try again later
       const retry = setTimeout(() => { this.connect(); }, RECONNECT_INTERVAL);
@@ -141,6 +143,6 @@ class PeerToPeer {
   }
 
   send(to, what, data, callback) {
-    client.request("forw", { to, msg: { what, data } }, callback);
+    this.client.request("forw", { to, msg: { what, data } }, callback);
   }
 }

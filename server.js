@@ -34,6 +34,7 @@ class Server {
     const connections = {};
 
     server.on('listening', () => {
+      console.log("Listening on port", port);
       this.eventHandlers.listening.forEach(h => h(connections));
     })
 
