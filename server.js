@@ -28,13 +28,13 @@ class Server {
     this.eventHandlers[eventName].push(callback);
   }
 
-  listen(port) {
-    const server = new WebsocketServer({port});
+  listen(options) {
+    const server = new WebsocketServer(options);
     let nextConnId = 0;
     const connections = {};
 
     server.on('listening', () => {
-      console.log("Listening on port", port);
+      // console.log("Listening on port", port);
       this.eventHandlers.listening.forEach(h => h(connections));
     })
 
