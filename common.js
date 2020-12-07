@@ -10,7 +10,6 @@ class RequestReply {
     const request = {type: "req", id, what, data};
     // store the request itself, so we can retransmit it if necessary
     this.pending[id] = [request, responseCallback];
-    console.log("pending:", Object.keys(this.pending))
     return request;
   }
 
@@ -21,7 +20,6 @@ class RequestReply {
       if (responseCallback) {
         responseCallback(err, data);
       }
-      console.log("pending:", Object.keys(this.pending))
     }
   }
 
