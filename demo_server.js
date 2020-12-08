@@ -6,6 +6,8 @@ const port = process.argv[2] || 9000;
 
 const http = require('http');
 const handler = require('serve-handler');
+const {Server, logArrivalDeparture, notifyPeers, installRequestHandler, messagingBroker} = require('./server');
+
 
 const server = http.createServer((request, response) => {
   // You pass two more arguments for config and middleware
@@ -14,13 +16,6 @@ const server = http.createServer((request, response) => {
   return handler(request, response);
 })
 
-const {
-  Server,
-  logArrivalDeparture,
-  notifyPeers,
-  installRequestHandler,
-  messagingBroker,
-} = require('./server');
 
 const wsServer = new Server({server, path: "/websocket"});
 
