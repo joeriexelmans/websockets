@@ -58,3 +58,7 @@ if (typeof window === 'undefined') {
   // We're on NodeJS
   module.exports = { RequestReply, Timer }
 }
+
+function shortUUID(uuid) {
+  return uuid.substring(0, 8);
+}

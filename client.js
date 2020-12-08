@@ -12,7 +12,7 @@ const SERVER_TIMEOUT = 4000; // ms
 
 function recvJSON(data) {
   const parsed = JSON.parse(data) // may throw
-  if (parsed.type !== "pong") console.log("--> ", parsed);
+  if (parsed.type !== "pong") console.log("--> in ", parsed);
   return parsed;
 }
 
@@ -74,7 +74,7 @@ class Client {
     this.serverTimeoutTimer.set();
 
     socket.sendJSON = function(json) {
-      if (json.type !== "ping") console.log("<-- ", json);
+      if (json.type !== "ping") console.log("out <-- ", json);
       this.send(JSON.stringify(json));
     }
 
@@ -83,6 +83,7 @@ class Client {
       try {
         parsed = recvJSON(event.data);
       } catch (e) {
+        console.log("received unparsable message", e)
         return; // ignore unparsable messages
       }
 
@@ -101,6 +102,9 @@ class Client {
           socket.sendJSON({type:"res", id, err, data});
         }
         this.eventHandlers.receiveReq.forEach(h => h(what, data, reply));
+      }
+      else if (parsed.type !== "pong") {
+        console.log("ignoring unknown message type: ", parsed.type);
       }
     }
 
@@ -144,7 +148,13 @@ class PeerToPeer {
       if (what === "msg") {
         const {from, msg} = data;
         if (handlers.hasOwnProperty(msg.what)) {
-          handlers[msg.what](from, msg.data, reply);
+          try {
+            handlers[msg.what](from, msg.data, reply);
+          } catch (e) {
+            console.log("exception in request handler", e);
+          }
+        } else {
+          console.log("no handler for request " + msg.what);
         }
       }
     });

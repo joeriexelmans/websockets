@@ -1,5 +1,5 @@
 const WebsocketServer = require('ws').Server;
-const { RequestReply, Timer } = require('./common');
+const { RequestReply, Timer, shortUUID } = require('./common');
 
 // Server parameters
 
@@ -7,13 +7,9 @@ const { RequestReply, Timer } = require('./common');
 // the client will be considered disconnected.
 const CLIENT_TIMEOUT = 5000; // ms
 
-function shortId(id) {
-  return id.substring(0, 8);
-}
-
 function recvJSON(data, from) {
   const parsed = JSON.parse(data) // may throw
-  if (parsed.type !== "ping") console.log(shortId(from), "--> ", parsed);
+  if (parsed.type !== "ping") console.log(shortUUID(from), "--> in ", parsed);
   return parsed;
 }
 
@@ -39,7 +35,7 @@ class Server {
       const connId = reqUrl.searchParams.get('me')
 
       const clientTimer = new Timer(CLIENT_TIMEOUT, () => {
-        console.log("client", shortId(connId), "timeout");
+        console.log("client", shortUUID(connId), "timeout");
         socket.close();
         if (connections.hasOwnProperty(connId)) {
           delete connections[connId];
@@ -48,7 +44,7 @@ class Server {
       });
 
       socket.sendJSON = function(json) {
-        if (json.type !== "pong") console.log(shortId(connId), "<-- ", json);
+        if (json.type !== "pong") console.log(shortUUID(connId), "out <-- ", json);
         this.send(JSON.stringify(json));
       }
 
@@ -58,7 +54,7 @@ class Server {
 
       socket.on('open', () => {
         // Seems to never occur for incoming connections
-        console.log("client", shortId(connId), "open");
+        console.log("client", shortUUID(connId), "open");
       });
 
       socket.on('message', data => {
@@ -86,7 +82,7 @@ class Server {
       });
 
       socket.on('close', (code, reason) => {
-        // console.log("client", shortId(connId), "closed. code:", code, "reason:", reason);
+        // console.log("client", shortUUID(connId), "closed. code:", code, "reason:", reason);
         if (connections.hasOwnProperty(connId)) {
           clientTimer.unset();
           delete connections[connId];
@@ -106,11 +102,11 @@ class Server {
 // Logs arrive/leave events
 function logArrivalDeparture(server) {
   server.on('arrive', (connId, socket, connections) => {
-    console.log("client", shortId(connId), "arrive.", "clients:", Object.keys(connections));
+    console.log("client", shortUUID(connId), "arrive.", "clients:", Object.keys(connections));
   })
 
   server.on('leave', (connId, connections) => {
-    console.log("client", shortId(connId), "leave.", "clients:", Object.keys(connections));
+    console.log("client", shortUUID(connId), "leave.", "clients:", Object.keys(connections));
   })
 }
 
@@ -142,7 +138,7 @@ function notifyPeers(server) {
 // Install a custom set of request handlers
 function installRequestHandler(server, handlers) {
   server.on('receive', (connId, socket, parsed) => {
-    // console.log("client", shortId(connId), "receiveReq", parsed);
+    // console.log("client", shortUUID(connId), "receiveReq", parsed);
     if (parsed.type === "req") {
       const {id, what, data} = parsed;
       if (!Number.isInteger(id)) {
