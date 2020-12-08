@@ -3,46 +3,43 @@ const { RequestReply, Timer } = require('./common');
 
 // Server parameters
 
-// After having not received anything from the client (including pings) for this amount of time,
+// After having not received anything from a client (including pings) for this amount of time,
 // the client will be considered disconnected.
 const CLIENT_TIMEOUT = 5000; // ms
 
+function shortId(id) {
+  return id.substring(0, 8);
+}
+
 function recvJSON(data, from) {
   const parsed = JSON.parse(data) // may throw
-  if (parsed.type !== "ping") console.log(from, "--> ", parsed);
+  if (parsed.type !== "ping") console.log(shortId(from), "--> ", parsed);
   return parsed;
 }
 
 class Server {
 
-  constructor() {
+  constructor(options) {
     this.eventHandlers = {
       arrive: [],
       leave: [],
       receive: [],
       listening: [],
     };
-  }
 
-  on(eventName, callback) {
-    this.eventHandlers[eventName].push(callback);
-  }
-
-  listen(options) {
     const server = new WebsocketServer(options);
-    let nextConnId = 0;
     const connections = {};
 
     server.on('listening', () => {
-      // console.log("Listening on port", port);
       this.eventHandlers.listening.forEach(h => h(connections));
     })
 
     server.on('connection', (socket, req) => {
-      const connId = nextConnId++;
+      const reqUrl = new URL(req.url, req.headers.origin);
+      const connId = reqUrl.searchParams.get('me')
 
       const clientTimer = new Timer(CLIENT_TIMEOUT, () => {
-        console.log("client", connId, "timeout");
+        console.log("client", shortId(connId), "timeout");
         socket.close();
         if (connections.hasOwnProperty(connId)) {
           delete connections[connId];
@@ -51,7 +48,7 @@ class Server {
       });
 
       socket.sendJSON = function(json) {
-        if (json.type !== "pong") console.log(connId, "<-- ", json);
+        if (json.type !== "pong") console.log(shortId(connId), "<-- ", json);
         this.send(JSON.stringify(json));
       }
 
@@ -61,7 +58,7 @@ class Server {
 
       socket.on('open', () => {
         // Seems to never occur for incoming connections
-        console.log("client", connId, "open");
+        console.log("client", shortId(connId), "open");
       });
 
       socket.on('message', data => {
@@ -89,7 +86,7 @@ class Server {
       });
 
       socket.on('close', (code, reason) => {
-        // console.log("client", connId, "closed. code:", code, "reason:", reason);
+        // console.log("client", shortId(connId), "closed. code:", code, "reason:", reason);
         if (connections.hasOwnProperty(connId)) {
           clientTimer.unset();
           delete connections[connId];
@@ -98,6 +95,10 @@ class Server {
       });
     });
   }
+
+  on(eventName, callback) {
+    this.eventHandlers[eventName].push(callback);
+  }
 }
 
 // Some example handlers:
@@ -105,11 +106,11 @@ class Server {
 // Logs arrive/leave events
 function logArrivalDeparture(server) {
   server.on('arrive', (connId, socket, connections) => {
-    console.log("client", connId, "arrive.", "clients:", Object.keys(connections));
+    console.log("client", shortId(connId), "arrive.", "clients:", Object.keys(connections));
   })
 
   server.on('leave', (connId, connections) => {
-    console.log("client", connId, "leave.", "clients:", Object.keys(connections));
+    console.log("client", shortId(connId), "leave.", "clients:", Object.keys(connections));
   })
 }
 
@@ -141,7 +142,7 @@ function notifyPeers(server) {
 // Install a custom set of request handlers
 function installRequestHandler(server, handlers) {
   server.on('receive', (connId, socket, parsed) => {
-    // console.log("client", connId, "receiveReq", parsed);
+    // console.log("client", shortId(connId), "receiveReq", parsed);
     if (parsed.type === "req") {
       const {id, what, data} = parsed;
       if (!Number.isInteger(id)) {
@@ -194,4 +195,3 @@ module.exports = {
   installRequestHandler,
   messagingBroker,
 }
-

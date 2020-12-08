@@ -3,8 +3,9 @@
   <title>WS Client</title>
   <script type="text/javascript" src="common.js"></script>
   <script type="text/javascript" src="client.js"></script>
+  <script type="text/javascript" src="uuidv4.min.js"></script>
   <script type="text/javascript">
-    const client = new Client("ws://localhost:9000/websocket");
+    const client = new Client("ws://localhost:9000/websocket", uuidv4());
     console.log("created client")
 
     client.on('connected', () => {

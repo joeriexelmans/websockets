@@ -18,8 +18,9 @@ function recvJSON(data) {
 
 class Client {
 
-  constructor(addr) {
+  constructor(addr, uuid) {
     this.addr = addr;
+    this.uuid = uuid;
 
     this.eventHandlers = {
       connected: [],
@@ -65,7 +66,8 @@ class Client {
       this.socket.close();
     }
 
-    const socket = new WebSocket(this.addr);
+    // We send our ID to to the server using a URL parameter
+    const socket = new WebSocket(this.addr + "?me=" + this.uuid);
     const socket_number = this.sockets++;
     console.log("new socket", socket_number)
 
