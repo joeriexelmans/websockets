@@ -164,3 +164,47 @@ class PeerToPeer {
     this.client.request("forw", { to, msg: { what, data } }, callback);
   }
 }
+
+// Listen for updates of current set of peers
+class Peers {
+
+  constructor(client) {
+    this.peers = {}
+    this.handlers = {
+      arrive: [],
+      leave: [],
+    }
+
+    client.on('receivePush', (what, data) => {
+      if (what === "peers") {
+        data.forEach(peer => {
+          this.peers[peer] = true;
+          this.handlers.arrive.forEach(h => h(data));
+        })
+      }
+      else if (what === "arrive") {
+        this.peers[data] = true;
+        this.handlers.arrive.forEach(h => h(data));
+      }
+      else if (what === "leave") {
+        this.handlers.leave.forEach(h => h(data));
+        delete this.peers[data];
+      }
+    });
+
+    client.on('disconnected', () => {
+      for (const peer in this.peers) {
+        this.handlers.leave.forEach(h => h(peer));
+      }
+      this.peers = {}
+    });
+  }
+
+  getPeers() {
+    return Object.keys(this.peers);
+  }
+
+  on(event, callback) {
+    this.handlers[event].push(callback);
+  }
+}
