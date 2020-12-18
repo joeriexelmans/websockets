@@ -110,28 +110,52 @@ function logArrivalDeparture(server) {
   })
 }
 
-// Broadcasts list of peers to everyone, whenever someone arrives or leaves
+// Broadcasts peer arrivals and departures
 function notifyPeers(server) {
+
   let connections = null;
   server.on('listening', cs => {
     connections = cs;
   });
-  function notify() {
-    peers = Object.keys(connections);
-    Object.entries(connections).forEach(([connId, socket]) => {
-      socket.sendJSON({
-        type: "push",
-        what: "peers",
-        data: {peers, you: connId},
-      });
-    });
-  }
-  server.on('arrive', (connId, socket) => {
-    notify();
+
+  // function notify() {
+  //   peers = Object.keys(connections);
+  //   Object.entries(connections).forEach(([connId, socket]) => {
+  //     socket.sendJSON({
+  //       type: "push",
+  //       what: "peers",
+  //       data: {peers, you: connId},
+  //     });
+  //   });
+  // }
+  server.on('arrive', (arrivedConnId, arrivedSocket) => {
+    Object.entries(connections).forEach(([receiverConnId, receiverSocket]) => {
+      if (arrivedConnId !== receiverConnId) {
+        receiverSocket.sendJSON({
+          type: "push",
+          what: "arrive",
+          data: arrivedConnId,
+        })        
+      }
+    })
+
+    arrivedSocket.sendJSON({
+      type: "push",
+      what: "peers",
+      data: Object.keys(connections).filter(connId => connId !== arrivedConnId),
+    })
   });
 
   server.on('leave', (connId) => {
-    notify();
+    Object.entries(connections).forEach(([receiverConnId, socket]) => {
+      if (connId !== receiverConnId) {
+        socket.sendJSON({
+          type: "push",
+          what: "leave",
+          data: connId,
+        })        
+      }
+    })
   });
 }
 
