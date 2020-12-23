@@ -1,0 +1,68 @@
+Original document outlining WebSocket protocol, before it was implemented.
+May not accurately describe current state of implementation.
+-------------------------------------------------------------------------
+
+
+WebSocket server
+  - maintains list of connected peers, and their socket
+  - detects disconnects, either:
+    - when client sends disconnect request
+    - when client stops sending pings
+  - does not retransmit responses
+  
+  - events:
+    - connected(connId, sock)
+    - disconnected(connId)
+    - request(cmd, data, reply)
+  
+  - services can be registered. a service has:
+      - a set of commands and their handlers
+
+WebSocket client
+  - automatically reconnects with server
+  - events:
+    - connected
+    - disconnected
+  - transparently buffers (retransmits?) requests until connected
+    => it is client's responsibility that all requests are idempotent
+    => server may temporarily cache responses for performance
+
+
+Protocol:
+  - Request, Reply:
+  
+     - client initiates request:
+        -> { type: "req", id: 42, cmd: "hello", data: ... }
+     - server sends response, in best effort manner:
+        <- { type: "res", id: 42, data: ... }
+        <- { type: "res", id: 42, err: "failed", data: ... }
+     - data attribute optional in both request and response
+     
+  - Push:
+     - server may send a push to client at any time:
+        <- { type: "push", data: ... }
+
+
+Applications:
+  - Pub-sub:
+  
+     - client can subscribe to certain events. this is just a request, followed by a reply (acknowledgement)
+        -> { type: "req", id: 43, cmd: "sub", data: { topic: "peers" } }
+        <- { type: "res", id: 43 } // OK
+        <- { type: "res", id: 43, err: "failed" }
+     - server maintains list of subscribers
+     - certain clients (or anyone?) can publish under a given topic
+     - published messages are pushed to all subscribers
+     
+     
+Client (browser) WebSocket events:
+    - open: when ready to send
+    - close:
+       - connect failed
+       - server closes (incl. shutdown)
+       - after client closes
+    
+Server WebSocket events:
+    - open: does not seem to occur
+    - close: when client closes (incl. browser tab close)
+
